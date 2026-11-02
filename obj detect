@@ -1,0 +1,89 @@
+import time
+import cv2
+from ultralytics import YOLO
+
+# Configuration
+MODEL_PATH = "yolo11n.pt"
+CONF_THRESHOLD = 0.45
+IMG_SIZE = 320
+SHOW_GUI = True  # Set to False if running headless over SSH
+
+print("Loading YOLO model...")
+model = YOLO(MODEL_PATH)
+print("Model loaded successfully!")
+
+# Open the camera
+camera = cv2.VideoCapture(0)
+
+# Set camera properties directly to reduce capture overhead
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+if not camera.isOpened():
+    raise RuntimeError("Could not open camera")
+
+print("Camera opened successfully!")
+print("Object detection running. Press 'q' or 'ESC' to quit.")
+
+# Timing & FPS tracking
+prev_time = time.time()
+last_print_time = 0.0
+
+try:
+    while True:
+        ret, frame = camera.read()
+        if not ret:
+            print("Failed to grab frame")
+            break
+
+        # Run inference (stream=True optimizes memory allocation in a loop)
+        results = model(
+            source=frame,
+            imgsz=IMG_SIZE,
+            conf=CONF_THRESHOLD,
+            verbose=False,
+            stream=True
+        )
+
+        result = next(results)
+
+        # Parse detected objects
+        detected_objects = []
+        for box in result.boxes:
+            class_id = int(box.cls[0])
+            confidence = float(box.conf[0])
+            name = model.names[class_id]
+            detected_objects.append(f"{name} ({confidence:.0%})")
+
+        # Rate-limit console logs to once every 0.5 seconds
+        current_time = time.time()
+        if detected_objects and (current_time - last_print_time > 0.5):
+            print(f"Detected: {', '.join(detected_objects)}")
+            last_print_time = current_time
+
+        # Calculate FPS
+        fps = 1 / (current_time - prev_time) if (current_time - prev_time) > 0 else 0
+        prev_time = current_time
+
+        if SHOW_GUI:
+            annotated_frame = result.plot()
+            cv2.putText(
+                annotated_frame,
+                f"FPS: {fps:.1f}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA
+            )
+            cv2.imshow("Rover Object Detection", annotated_frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q") or key == 27:
+                break
+
+finally:
+    camera.release()
+    cv2.destroyAllWindows()
+    print("Object detection stopped.")
